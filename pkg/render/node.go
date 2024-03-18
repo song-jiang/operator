@@ -46,14 +46,11 @@ import (
 )
 
 const (
-	BirdTemplatesConfigMapName = "bird-templates"
-	birdTemplateHashAnnotation = "hash.operator.tigera.io/bird-templates"
-	BPFOperatorAnnotation      = "operator.tigera.io/bpfEnabled"
-
-	nodeCniConfigAnnotation   = "hash.operator.tigera.io/cni-config"
-	bgpLayoutHashAnnotation   = "hash.operator.tigera.io/bgp-layout"
-	bgpBindModeHashAnnotation = "hash.operator.tigera.io/bgp-bind-mode"
-
+	BirdTemplatesConfigMapName        = "bird-templates"
+	birdTemplateHashAnnotation        = "hash.operator.tigera.io/bird-templates"
+	nodeCniConfigAnnotation           = "hash.operator.tigera.io/cni-config"
+	bgpLayoutHashAnnotation           = "hash.operator.tigera.io/bgp-layout"
+	bgpBindModeHashAnnotation         = "hash.operator.tigera.io/bgp-bind-mode"
 	BGPLayoutConfigMapName            = "bgp-layout"
 	BGPLayoutConfigMapKey             = "earlyNetworkConfiguration"
 	BGPLayoutVolumeName               = "bgp-layout"
@@ -66,7 +63,6 @@ const (
 	NodePrometheusTLSServerSecret = "calico-node-prometheus-server-tls"
 	CalicoNodeObjectName          = "calico-node"
 	CalicoCNIPluginObjectName     = "calico-cni-plugin"
-	BPFVolumeName                 = "bpffs"
 )
 
 var (
@@ -917,7 +913,7 @@ func (c *nodeComponent) nodeDaemonset(cniCfgMap *corev1.ConfigMap) *appsv1.Daemo
 		initContainers = append(initContainers, c.flexVolumeContainer())
 	}
 
-	if c.cfg.Installation.BPFEnabled() {
+	if c.bpfDataplaneEnabled() {
 		initContainers = append(initContainers, c.bpffsInitContainer())
 	}
 
@@ -1056,7 +1052,7 @@ func (c *nodeComponent) nodeVolumes() []corev1.Volume {
 		)
 	}
 
-	if c.cfg.Installation.BPFEnabled() {
+	if c.bpfDataplaneEnabled() {
 		volumes = append(volumes,
 			// Volume for the containing directory so that the init container can mount the child bpf directory if needed.
 			corev1.Volume{Name: "sys-fs", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/sys/fs", Type: &dirOrCreate}}},
@@ -1138,6 +1134,12 @@ func (c *nodeComponent) nodeVolumes() []corev1.Volume {
 
 func (c *nodeComponent) varRunCalicoVolume() corev1.Volume {
 	return corev1.Volume{Name: "var-run-calico", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/var/run/calico"}}}
+}
+
+func (c *nodeComponent) bpfDataplaneEnabled() bool {
+	return c.cfg.Installation.CalicoNetwork != nil &&
+		c.cfg.Installation.CalicoNetwork.LinuxDataplane != nil &&
+		*c.cfg.Installation.CalicoNetwork.LinuxDataplane == operatorv1.LinuxDataplaneBPF
 }
 
 func (c *nodeComponent) vppDataplaneEnabled() bool {
@@ -1322,8 +1324,8 @@ func (c *nodeComponent) nodeVolumeMounts() []corev1.VolumeMount {
 			corev1.VolumeMount{MountPath: "/var/lib/calico", Name: "var-lib-calico"},
 		)
 	}
-	if c.cfg.Installation.BPFEnabled() {
-		nodeVolumeMounts = append(nodeVolumeMounts, corev1.VolumeMount{MountPath: "/sys/fs/bpf", Name: BPFVolumeName})
+	if c.bpfDataplaneEnabled() {
+		nodeVolumeMounts = append(nodeVolumeMounts, corev1.VolumeMount{MountPath: "/sys/fs/bpf", Name: "bpffs"})
 	}
 	if c.vppDataplaneEnabled() {
 		nodeVolumeMounts = append(nodeVolumeMounts, corev1.VolumeMount{MountPath: "/usr/local/bin/felix-plugins", Name: "felix-plugins", ReadOnly: true})
@@ -1520,6 +1522,9 @@ func (c *nodeComponent) nodeEnvVars() []corev1.EnvVar {
 		}
 	}
 
+	if c.bpfDataplaneEnabled() {
+		nodeEnv = append(nodeEnv, corev1.EnvVar{Name: "FELIX_BPFENABLED", Value: "true"})
+	}
 	if c.vppDataplaneEnabled() {
 		nodeEnv = append(nodeEnv, corev1.EnvVar{
 			Name:  "FELIX_USEINTERNALDATAPLANEDRIVER",
